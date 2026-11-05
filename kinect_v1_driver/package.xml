@@ -14,6 +14,8 @@
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
   <depend>audio_common_msgs</depend>
+  <depend>ament_index_cpp</depend>
+  <depend>camera_calibration_parsers</depend>
   <!-- libfreenect is built from source and installed in /usr/local (see README). -->
 
   <test_depend>ament_cmake_gtest</test_depend>

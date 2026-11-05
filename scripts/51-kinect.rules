@@ -1,0 +1,9 @@
+# Microsoft Kinect for Xbox 360 (model 1414): let users in the plugdev group
+# open the three USB devices through libusb (no root needed).
+#   02b0 = motor (tilt, LED, accelerometer)
+#   02ad = audio (microphone array; firmware loaded by libfreenect)
+#   02ae = camera (RGB + depth)
+# Install: sudo cp 51-kinect.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger
+SUBSYSTEM=="usb", ATTR{idVendor}=="045e", ATTR{idProduct}=="02b0", MODE="0660", GROUP="plugdev"
+SUBSYSTEM=="usb", ATTR{idVendor}=="045e", ATTR{idProduct}=="02ad", MODE="0660", GROUP="plugdev"
+SUBSYSTEM=="usb", ATTR{idVendor}=="045e", ATTR{idProduct}=="02ae", MODE="0660", GROUP="plugdev"

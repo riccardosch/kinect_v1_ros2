@@ -40,6 +40,7 @@ install(PROGRAMS
   scripts/depth_stats.py
   scripts/imu_stats.py
   scripts/audio_stats.py
+  scripts/check_camera_info.py
   DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)

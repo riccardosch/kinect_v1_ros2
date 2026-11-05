@@ -17,7 +17,7 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
 from launch_ros.parameter_descriptions import ParameterValue
@@ -49,13 +49,19 @@ def generate_launch_description():
     )
 
     # Scenario A of the benchmark: consumers in the same container.
+    # Registered depth is published under depth_registered/ (openni convention).
+    depth_ns = PythonExpression(
+        ["'depth_registered' if '", LaunchConfiguration('depth_mode'),
+         "' == 'registered' else 'depth'"])
+    topic_ns = {'rgb': 'rgb', 'depth': depth_ns}
+
     def image_stats(stream):
         return ComposableNode(
             package='kinect_v1_bench',
             plugin='kinect_v1_bench::ImageStatsNode',
             name=f'{stream}_stats',
             namespace=namespace,
-            remappings=[('image', f'{stream}/image_raw')],
+            remappings=[('image', [topic_ns[stream], '/image_raw'])],
             parameters=[{
                 'qos_depth': ParameterValue(qos_depth, value_type=int),
                 'log_buffer_address': ParameterValue(log_buffer_address, value_type=bool),

@@ -14,6 +14,7 @@
 
 #include "kinect_v1_driver/kinect_camera_node.hpp"
 
+#include <libfreenect_registration.h>
 #include <sys/time.h>
 
 #include <algorithm>
@@ -79,6 +80,11 @@ KinectCameraNode::KinectCameraNode(const rclcpp::NodeOptions & options)
   const auto qos_depth = declare_parameter<int>("qos_depth", 1);
   const auto stats_period_s = declare_parameter<double>("stats_period_s", 5.0);
   log_buffer_address_ = declare_parameter<bool>("log_buffer_address", false);
+  // Calibration URLs (file:// or package://, ${NAME} and ${ROS_HOME} expanded).
+  // Empty = file://${ROS_HOME}/camera_info/${NAME}.yaml with NAME = rgb_<serial>
+  // or depth_<serial>, the same default as camera_info_manager.
+  rgb_camera_info_url_ = declare_parameter<std::string>("rgb_camera_info_url", "");
+  depth_camera_info_url_ = declare_parameter<std::string>("depth_camera_info_url", "");
 
   if (qos_depth < 1) {
     throw std::invalid_argument("qos_depth must be >= 1");
@@ -91,6 +97,7 @@ KinectCameraNode::KinectCameraNode(const rclcpp::NodeOptions & options)
   }
 
   rgb_.name = "rgb";
+  rgb_.topic_ns = "rgb";
   rgb_.enabled = enable_rgb;
   rgb_.set_buffer = &freenect_set_video_buffer;
   rgb_.mode = freenect_find_video_mode(FREENECT_RESOLUTION_MEDIUM, FREENECT_VIDEO_RGB);
@@ -98,10 +105,13 @@ KinectCameraNode::KinectCameraNode(const rclcpp::NodeOptions & options)
   rgb_.encoding = "rgb8";
   rgb_.bytes_per_pixel = 3;
 
-  // DEPTH_MM: millimetres in the IR (depth) camera geometry.
+  // DEPTH_MM: millimetres in the IR (depth) camera geometry -> depth/*.
   // DEPTH_REGISTERED: millimetres re-projected onto the RGB camera, so the
-  // image shares the RGB optical frame and pixel grid.
+  // image shares the RGB optical frame, pixel grid and calibration ->
+  // depth_registered/* (openni/freenect convention, expected by
+  // depth_image_proc::PointCloudXyzrgbNode).
   depth_.name = "depth";
+  depth_.topic_ns = depth_mode_ == "registered" ? "depth_registered" : "depth";
   depth_.enabled = depth_mode_ != "off";
   depth_.set_buffer = &freenect_set_depth_buffer;
   depth_.mode = freenect_find_depth_mode(
@@ -116,11 +126,18 @@ KinectCameraNode::KinectCameraNode(const rclcpp::NodeOptions & options)
   const auto sensor_qos = rclcpp::QoS(rclcpp::KeepLast(static_cast<size_t>(qos_depth)))
     .best_effort()
     .durability_volatile();
-  if (rgb_.enabled) {
-    rgb_.pub = create_publisher<sensor_msgs::msg::Image>("rgb/image_raw", sensor_qos);
-  }
-  if (depth_.enabled) {
-    depth_.pub = create_publisher<sensor_msgs::msg::Image>("depth/image_raw", sensor_qos);
+  // camera_info is small: reliable, so that it also reaches subscribers that
+  // insist on RELIABLE (e.g. PointCloudXyzrgbNode's camera_info subscriber,
+  // which has no QoS override). A reliable publisher matches both kinds.
+  const auto info_qos = rclcpp::QoS(rclcpp::KeepLast(static_cast<size_t>(qos_depth)))
+    .reliable()
+    .durability_volatile();
+  for (Stream * s : {&rgb_, &depth_}) {
+    if (s->enabled) {
+      s->pub = create_publisher<sensor_msgs::msg::Image>(s->topic_ns + "/image_raw", sensor_qos);
+      s->info_pub = create_publisher<sensor_msgs::msg::CameraInfo>(
+        s->topic_ns + "/camera_info", info_qos);
+    }
   }
 
   RCLCPP_INFO(
@@ -128,6 +145,13 @@ KinectCameraNode::KinectCameraNode(const rclcpp::NodeOptions & options)
     options.use_intra_process_comms() ? "enabled" : "DISABLED (memcpy/serialization will occur)");
 
   openDevice();
+  try {
+    setupCameraInfo();
+    startStreams();
+  } catch (...) {
+    closeDevice();
+    throw;
+  }
 
   stats_start_ = now();
   if (stats_period_s > 0.0) {
@@ -169,6 +193,23 @@ void KinectCameraNode::openDevice()
             "Kinect #" + std::to_string(device_index_) + " not found (" +
             std::to_string(num_devices) + " connected; is the 12 V adapter plugged in?)");
   }
+  // Serial number of the camera: names the calibration files, so that each
+  // physical Kinect keeps its own calibration.
+  freenect_device_attributes * attributes = nullptr;
+  if (freenect_list_device_attributes(ctx_, &attributes) >= 0) {
+    int index = 0;
+    for (auto * a = attributes; a != nullptr; a = a->next, ++index) {
+      if (index == device_index_ && a->camera_serial != nullptr) {
+        serial_ = a->camera_serial;
+      }
+    }
+    freenect_free_device_attributes(attributes);
+  }
+  if (serial_.empty()) {
+    serial_ = "unknown";
+    RCLCPP_WARN(get_logger(), "Could not read the camera serial number");
+  }
+
   if (freenect_open_device(ctx_, &dev_, device_index_) < 0) {
     freenect_shutdown(ctx_);
     ctx_ = nullptr;
@@ -192,19 +233,59 @@ void KinectCameraNode::openDevice()
     }
     freenect_set_depth_callback(dev_, &KinectCameraNode::depthCallback);
   }
+}
 
-  try {
-    startStream(rgb_);
-    startStream(depth_);
-  } catch (...) {
-    closeDevice();
-    throw;
+void KinectCameraNode::setupCameraInfo()
+{
+  const auto w = static_cast<uint32_t>(rgb_.mode.width);
+  const auto h = static_cast<uint32_t>(rgb_.mode.height);
+
+  // RGB default: libfreenect has no factory intrinsics for the RGB camera.
+  // 525 px is the nominal Kinect v1 value used by the ROS 1 openni/freenect
+  // drivers; calibrate for real accuracy.
+  const auto rgb_default = makePinholeCameraInfo(w, h, 525.0, 525.0, 319.5, 239.5);
+
+  // Depth (IR) default: from the factory zero-plane data the device reports
+  // at open time, with the principal point libfreenect itself assumes
+  // (image centre, freenect_camera_to_world).
+  freenect_registration reg = freenect_copy_registration(dev_);
+  const double ref_distance = reg.zero_plane_info.reference_distance;
+  const double ref_pixel_size = reg.zero_plane_info.reference_pixel_size;
+  freenect_destroy_registration(&reg);  // copy_registration allocates tables
+  double depth_f = depthFocalLengthPx(ref_distance, ref_pixel_size);
+  if (depth_f <= 0.0) {
+    RCLCPP_WARN(get_logger(), "Invalid factory zero-plane data; using 580 px for depth");
+    depth_f = 580.0;
+  }
+  const auto depth_default = makePinholeCameraInfo(w, h, depth_f, depth_f, w / 2.0, h / 2.0);
+
+  if (rgb_.enabled || depth_mode_ == "registered") {
+    rgb_.info = std::make_shared<CameraInfoSource>(
+      *this, "rgb", "rgb_" + serial_, rgb_camera_info_url_, rgb_default);
+  }
+  if (depth_mode_ == "registered") {
+    depth_.info = rgb_.info;  // registered depth lives in the RGB camera
+  } else if (depth_.enabled) {
+    depth_.info = std::make_shared<CameraInfoSource>(
+      *this, "depth", "depth_" + serial_, depth_camera_info_url_, depth_default);
   }
 
   RCLCPP_INFO(
-    get_logger(), "Kinect #%d streaming: rgb %s, depth %s (frame '%s'), libfreenect %s",
+    get_logger(), "Kinect %s: factory depth focal %.1f px (zero plane %.2f mm / %.4f mm); "
+    "rgb %s, depth %s", serial_.c_str(), depth_f, ref_distance, ref_pixel_size,
+    rgb_.info ? (rgb_.info->isCalibrated() ? "calibrated" : "nominal") : "off",
+    !depth_.info ? "off" : depth_mode_ == "registered" ? "registered (uses rgb calibration)" :
+    depth_.info->isCalibrated() ? "calibrated" : "factory default");
+}
+
+void KinectCameraNode::startStreams()
+{
+  startStream(rgb_);
+  startStream(depth_);
+  RCLCPP_INFO(
+    get_logger(), "Kinect #%d streaming: rgb %s, depth %s -> %s/ (frame '%s'), libfreenect %s",
     device_index_, rgb_.enabled ? "640x480@30" : "off", depth_mode_.c_str(),
-    depth_.frame_id.c_str(), KINECT_V1_LIBFREENECT_VERSION);
+    depth_.topic_ns.c_str(), depth_.frame_id.c_str(), KINECT_V1_LIBFREENECT_VERSION);
 }
 
 void KinectCameraNode::startStream(Stream & stream)
@@ -313,6 +394,11 @@ void KinectCameraNode::onFrame(Stream & stream, void * buffer)
   }
 
   const auto t_pub = std::chrono::steady_clock::now();
+  // camera_info with the SAME stamp and frame_id as the image: consumers
+  // (image_transport CameraSubscriber, depth_image_proc) pair them exactly.
+  auto info = std::make_unique<sensor_msgs::msg::CameraInfo>(stream.info->get());
+  info->header = filled->header;
+  stream.info_pub->publish(std::move(info));
   stream.pub->publish(std::move(filled));
   const auto publish_ns = static_cast<uint64_t>(elapsedNs(t_pub));
 

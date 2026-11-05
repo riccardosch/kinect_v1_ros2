@@ -19,17 +19,20 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 
+#include "kinect_v1_driver/camera_info.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "sensor_msgs/msg/camera_info.hpp"
 #include "sensor_msgs/msg/image.hpp"
 
 namespace kinect_v1_driver
 {
 
-/// Kinect v1 camera component: RGB and depth streams.
+/// Kinect v1 camera component: RGB and depth streams with camera_info.
 ///
 /// Zero-copy design: libfreenect converts each frame (Bayer -> RGB, raw
 /// disparity -> millimetres) directly into the `data` vector of a
@@ -38,6 +41,11 @@ namespace kinect_v1_driver
 /// one is published as a std::unique_ptr. With intra-process communication
 /// enabled and ConstSharedPtr subscribers, rclcpp hands the very same buffer
 /// to the consumers without any memcpy.
+///
+/// Topics follow the openni/freenect ROS convention:
+///   rgb/image_raw, rgb/camera_info
+///   depth/image_raw, depth/camera_info                       (depth_mode mm)
+///   depth_registered/image_raw, depth_registered/camera_info (depth_mode registered)
 class KinectCameraNode : public rclcpp::Node
 {
 public:
@@ -67,6 +75,7 @@ private:
   struct Stream
   {
     const char * name{""};
+    std::string topic_ns;  // "rgb", "depth" or "depth_registered"
     bool enabled{false};
     SetBufferFn set_buffer{nullptr};
     freenect_frame_mode mode{};
@@ -78,10 +87,15 @@ private:
     /// Touched only by the event thread once streaming has started.
     sensor_msgs::msg::Image::UniquePtr back;
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub;
+    rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr info_pub;
+    /// Calibration; shared between rgb and depth in registered mode.
+    std::shared_ptr<CameraInfoSource> info;
     FrameStats stats;
   };
 
   void openDevice();
+  void setupCameraInfo();
+  void startStreams();
   void startStream(Stream & stream);
   void closeDevice();
 
@@ -103,6 +117,11 @@ private:
   int device_index_{0};
   bool log_buffer_address_{false};
   std::string depth_mode_;
+  std::string rgb_camera_info_url_;
+  std::string depth_camera_info_url_;
+
+  // Device identity, read at open time
+  std::string serial_;
 
   // libfreenect handles (owned by this node)
   freenect_context * ctx_{nullptr};
