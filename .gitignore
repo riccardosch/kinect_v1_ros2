@@ -10,7 +10,6 @@ audios.bin
 
 # Personal learning examples (local only)
 learn/
-tools/
 
 # Probe / bench artefacts
 *.ppm
