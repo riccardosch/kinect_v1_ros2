@@ -39,38 +39,45 @@ def generate_launch_description():
         name='kinect_camera',
         namespace=namespace,
         parameters=[{
+            'enable_rgb': ParameterValue(LaunchConfiguration('enable_rgb'), value_type=bool),
+            'depth_mode': LaunchConfiguration('depth_mode'),
             'qos_depth': ParameterValue(qos_depth, value_type=int),
             'log_buffer_address': ParameterValue(log_buffer_address, value_type=bool),
         }],
         extra_arguments=intra_process_args,
     )
 
-    # Scenario A of the benchmark: consumer in the same container.
-    image_stats = ComposableNode(
-        package='kinect_v1_bench',
-        plugin='kinect_v1_bench::ImageStatsNode',
-        name='rgb_stats',
-        namespace=namespace,
-        remappings=[('image', 'rgb/image_raw')],
-        parameters=[{
-            'qos_depth': ParameterValue(qos_depth, value_type=int),
-            'log_buffer_address': ParameterValue(log_buffer_address, value_type=bool),
-        }],
-        extra_arguments=intra_process_args,
-        condition=IfCondition(bench),
-    )
+    # Scenario A of the benchmark: consumers in the same container.
+    def image_stats(stream):
+        return ComposableNode(
+            package='kinect_v1_bench',
+            plugin='kinect_v1_bench::ImageStatsNode',
+            name=f'{stream}_stats',
+            namespace=namespace,
+            remappings=[('image', f'{stream}/image_raw')],
+            parameters=[{
+                'qos_depth': ParameterValue(qos_depth, value_type=int),
+                'log_buffer_address': ParameterValue(log_buffer_address, value_type=bool),
+            }],
+            extra_arguments=intra_process_args,
+            condition=IfCondition(bench),
+        )
 
     container = ComposableNodeContainer(
         name='kinect_container',
         namespace=namespace,
         package='rclcpp_components',
         executable='component_container_mt',
-        composable_node_descriptions=[camera, image_stats],
+        composable_node_descriptions=[camera, image_stats('rgb'), image_stats('depth')],
         output='screen',
     )
 
     return LaunchDescription([
         DeclareLaunchArgument('namespace', default_value='kinect'),
+        DeclareLaunchArgument('enable_rgb', default_value='true'),
+        DeclareLaunchArgument('depth_mode', default_value='mm',
+                              description="'mm' (IR geometry), 'registered' (aligned to RGB) "
+                                          "or 'off'"),
         DeclareLaunchArgument('qos_depth', default_value='1',
                               description='History depth of the sensor topics'),
         DeclareLaunchArgument('intra_process', default_value='true',

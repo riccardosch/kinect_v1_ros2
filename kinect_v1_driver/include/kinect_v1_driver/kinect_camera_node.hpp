@@ -29,14 +29,15 @@
 namespace kinect_v1_driver
 {
 
-/// Kinect v1 camera component (RGB stream).
+/// Kinect v1 camera component: RGB and depth streams.
 ///
-/// Zero-copy design: libfreenect converts each frame (Bayer -> RGB) directly
-/// into the `data` vector of a sensor_msgs::msg::Image owned by this node.
-/// When the frame is complete, a fresh message is registered as the next
-/// libfreenect buffer and the filled one is published as a std::unique_ptr.
-/// With intra-process communication enabled and ConstSharedPtr subscribers,
-/// rclcpp hands the very same buffer to the consumers without any memcpy.
+/// Zero-copy design: libfreenect converts each frame (Bayer -> RGB, raw
+/// disparity -> millimetres) directly into the `data` vector of a
+/// sensor_msgs::msg::Image owned by this node. When a frame is complete, a
+/// fresh message is registered as the next libfreenect buffer and the filled
+/// one is published as a std::unique_ptr. With intra-process communication
+/// enabled and ConstSharedPtr subscribers, rclcpp hands the very same buffer
+/// to the consumers without any memcpy.
 class KinectCameraNode : public rclcpp::Node
 {
 public:
@@ -48,7 +49,7 @@ public:
 
 private:
   /// Per-period counters, written by the libfreenect event thread and
-  /// consumed by the stats timer.
+  /// consumed by the stats timer (guarded by stats_mutex_).
   struct FrameStats
   {
     uint64_t frames{0};
@@ -58,43 +59,62 @@ private:
     uint64_t publish_ns_max{0};
   };
 
+  /// libfreenect setter for the user buffer of one stream
+  /// (freenect_set_video_buffer or freenect_set_depth_buffer).
+  using SetBufferFn = int (*)(freenect_device *, void *);
+
+  /// Everything needed to run one zero-copy image stream.
+  struct Stream
+  {
+    const char * name{""};
+    bool enabled{false};
+    SetBufferFn set_buffer{nullptr};
+    freenect_frame_mode mode{};
+    std::string frame_id;
+    std::string encoding;
+    uint32_t bytes_per_pixel{0};
+
+    /// Message whose data buffer libfreenect is currently writing into.
+    /// Touched only by the event thread once streaming has started.
+    sensor_msgs::msg::Image::UniquePtr back;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub;
+    FrameStats stats;
+  };
+
   void openDevice();
+  void startStream(Stream & stream);
   void closeDevice();
 
-  /// Allocates a message sized for the current video mode. Its `data`
+  /// Allocates a message sized for the stream's frame mode. Its `data`
   /// storage becomes the libfreenect user buffer.
-  sensor_msgs::msg::Image::UniquePtr makeRgbMessage() const;
+  sensor_msgs::msg::Image::UniquePtr makeMessage(const Stream & stream) const;
 
   /// Body of the dedicated thread that pumps libusb events.
   void eventLoop();
 
-  /// libfreenect C callback trampoline -> onVideoFrame().
+  /// libfreenect C callback trampolines -> onFrame().
   static void videoCallback(freenect_device * dev, void * buffer, uint32_t timestamp);
-  void onVideoFrame(void * buffer, uint32_t timestamp);
+  static void depthCallback(freenect_device * dev, void * buffer, uint32_t timestamp);
+  void onFrame(Stream & stream, void * buffer);
 
   void reportStats();
 
   // Parameters
   int device_index_{0};
-  std::string rgb_frame_id_;
   bool log_buffer_address_{false};
+  std::string depth_mode_;
 
   // libfreenect handles (owned by this node)
   freenect_context * ctx_{nullptr};
   freenect_device * dev_{nullptr};
-  freenect_frame_mode video_mode_{};
 
-  /// Message whose data buffer libfreenect is currently writing into.
-  /// Touched only by the event thread once streaming has started.
-  sensor_msgs::msg::Image::UniquePtr rgb_back_;
-
-  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr rgb_pub_;
+  Stream rgb_;
+  Stream depth_;
 
   std::thread event_thread_;
   std::atomic<bool> running_{false};
 
   std::mutex stats_mutex_;
-  FrameStats stats_;
   rclcpp::Time stats_start_;
   rclcpp::TimerBase::SharedPtr stats_timer_;
 };

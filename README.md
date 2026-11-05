@@ -2,7 +2,7 @@
 
 ROS 2 Jazzy driver for the Microsoft Kinect v1 (Xbox 360, model 1414), written from scratch on top of [libfreenect](https://github.com/OpenKinect/libfreenect).
 
-> **Status: work in progress.** Only the RGB stream is implemented so far. Depth, tilt/LED, IMU and audio are coming.
+> **Status: work in progress.** RGB and depth (mm / registered) are implemented. LED, audio, tilt and IMU are coming.
 
 ## Design goals
 
@@ -67,6 +67,7 @@ install/kinect_v1_bench/lib/kinect_v1_bench/cpu_usage.sh kinect_container 60
 | Topic | Type | QoS |
 |---|---|---|
 | `rgb/image_raw` | `sensor_msgs/Image` (`rgb8`, 640×480) | best effort, keep last `qos_depth`, volatile |
+| `depth/image_raw` | `sensor_msgs/Image` (`16UC1`, millimetres, 0 = no reading, 640×480) | best effort, keep last `qos_depth`, volatile |
 
 `header.stamp` is taken when the frame callback fires (host clock). RGB and depth are **not** hardware-synchronised.
 
@@ -75,7 +76,10 @@ install/kinect_v1_bench/lib/kinect_v1_bench/cpu_usage.sh kinect_container 60
 | Name | Default | Description |
 |---|---|---|
 | `device_index` | `0` | Index of the Kinect camera on the bus |
-| `rgb_frame_id` | `kinect_rgb_optical_frame` | `header.frame_id` of RGB images |
+| `enable_rgb` | `true` | Stream RGB |
+| `depth_mode` | `mm` | `mm`: depth in the IR camera geometry; `registered`: re-projected onto the RGB camera (same frame and pixel grid as RGB, more holes, more CPU); `off` |
+| `rgb_frame_id` | `kinect_rgb_optical_frame` | `header.frame_id` of RGB images (and of depth in `registered` mode) |
+| `depth_frame_id` | `kinect_depth_optical_frame` | `header.frame_id` of depth images in `mm` mode |
 | `qos_depth` | `1` | History depth of sensor topics |
 | `stats_period_s` | `5.0` | Period of the rate/alloc/publish stats log (0 = off) |
 | `log_buffer_address` | `false` | Log the data address of every published frame |

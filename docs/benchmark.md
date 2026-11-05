@@ -30,6 +30,30 @@ Zero-copy check (scenario A, `log_buffer_address:=true`, about 6 s):
 - Without intra-process, `publish()` (serialization plus DDS write) costs 0.27–0.8 ms **inside the libfreenect event thread**. This is the main argument for keeping consumers in the same container.
 - **Equal addresses alone do not prove zero-copy.** With intra-process disabled, malloc often hands the freed publisher buffer to the deserialized message, so the addresses match anyway. The bench therefore also checks `from_intra_process`.
 
+## RGB + depth, zero-copy driver (2026-11-05)
+
+Scenario A, both streams at the same time, with one consumer per stream in the container (5 s windows):
+
+| `depth_mode` | Stream | Rate | Lag mean / p95 / max | alloc+zero mean | publish mean | Zero-copy (same address + intra) |
+|---|---|---|---|---|---|---|
+| `mm` | rgb | 30.00 Hz | 0.40 / 0.55 / 1.20 ms | 188 µs | 23 µs | 438/438 |
+| `mm` | depth | 30.00 Hz | 0.29 / 0.40 / 0.84 ms | 101 µs | 22 µs | 437/437 |
+| `registered` | rgb | 29.8–30.0 Hz | 0.25 / 0.29 / 0.31 ms | 133 µs | 15 µs | 440/440 |
+| `registered` | depth | 29.8–30.0 Hz | 0.30 / 0.39 / 0.57 ms | 85 µs | 22 µs | 439/439 |
+
+The driver published a few more frames than the consumers received (for example 446 against 438): those are frames from before the consumer subscribed or after shutdown began.
+
+Depth content over 60 frames, same scene:
+
+| `depth_mode` | frame_id | Zero (no reading) pixels | Centre 10×10 median | Max value |
+|---|---|---|---|---|
+| `mm` | `kinect_depth_optical_frame` | 8.9 % | 2478 mm | 10000 mm |
+| `registered` | `kinect_rgb_optical_frame` | 21.3 % | 2443 mm | 4243 mm |
+
+- The extra holes in `registered` come from the re-projection: occlusions, plus RGB-image borders that the depth camera does not see.
+- The centre spread reached 0 in some frames of both modes. Not investigated yet. Hypothesis: a few frames right after `start_depth`.
+- **Not verified yet:** the ±5 % accuracy check against a tape-measured distance, and the CPU cost of `registered` compared with `mm`.
+
 ### Open points
 
 - **No memcpy baseline yet.** The driver went straight to zero-copy. Design point 4 (does the cost of allocating and zeroing cancel the gain?) needs the same measurement on a memcpy version. Hypothesis, not verified: zero-filling 900 KB costs about as much as copying them, so a message pool (no allocation, no zeroing) would be the real win.
