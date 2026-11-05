@@ -1,0 +1,20 @@
+# colcon workspace output (when building in-place)
+build/
+install/
+log/
+
+# Kinect firmware must never be committed
+audios.bin
+*.bin
+*.fw
+
+# Personal learning examples (local only)
+learn/
+
+# Probe / bench artefacts
+*.ppm
+*.pgm
+*.wav
+
+# Editor
+.vscode/
