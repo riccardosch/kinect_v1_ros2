@@ -34,7 +34,11 @@ install(TARGETS image_stats_component
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
 install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
-install(PROGRAMS scripts/cpu_usage.sh DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS
+  scripts/cpu_usage.sh
+  scripts/check_zero_copy.py
+  scripts/depth_stats.py
+  DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

@@ -40,7 +40,8 @@ def generate_launch_description():
         namespace=namespace,
         parameters=[{
             'enable_rgb': ParameterValue(LaunchConfiguration('enable_rgb'), value_type=bool),
-            'depth_mode': LaunchConfiguration('depth_mode'),
+            # value_type=str is required: YAML would turn 'off' into False.
+            'depth_mode': ParameterValue(LaunchConfiguration('depth_mode'), value_type=str),
             'qos_depth': ParameterValue(qos_depth, value_type=int),
             'log_buffer_address': ParameterValue(log_buffer_address, value_type=bool),
         }],
