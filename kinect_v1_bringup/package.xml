@@ -11,9 +11,16 @@
 
   <exec_depend>kinect_v1_driver</exec_depend>
   <exec_depend>kinect_v1_bench</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>rclcpp_components</exec_depend>
+  <!-- point_cloud:=true -->
+  <exec_depend>depth_image_proc</exec_depend>
+  <!-- publish_tf:=true -->
+  <exec_depend>tf2_ros</exec_depend>
+  <!-- rviz/remote.rviz, used on the viewing machine -->
+  <exec_depend>rviz2</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

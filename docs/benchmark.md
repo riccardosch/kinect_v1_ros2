@@ -51,8 +51,36 @@ Depth content over 60 frames, same scene:
 | `registered` | `kinect_rgb_optical_frame` | 21.3 % | 2443 mm | 4243 mm |
 
 - The extra holes in `registered` come from the re-projection: occlusions, plus RGB-image borders that the depth camera does not see.
-- The centre spread reached 0 in some frames of both modes. Not investigated yet. Hypothesis: a few frames right after `start_depth`.
-- **Not verified yet:** the ±5 % accuracy check against a tape-measured distance, and the CPU cost of `registered` compared with `mm`.
+- The centre spread reached 0 in some frames of both modes. Confirmed later (`learn/04`): the **first** depth frame after `start_depth` is incomplete (centre 0, 15.5 % holes); from the second frame on it is stable.
+- **Not verified yet:** the ±5 % accuracy check against a tape-measured distance.
+
+## Point cloud (2026-11-06)
+
+`kinect.launch.py aux:=false point_cloud:=true`, RGB + depth streaming. `cloud_stats.py` runs in **another process** (so the cloud is serialized through DDS). CPU measured with `pidstat` over 8–10 s.
+
+| `depth_mode` | Component | Cloud size | Rate | Lag mean / p95 / max | Valid points | Container CPU without → with cloud subscriber |
+|---|---|---|---|---|---|---|
+| `mm` | `PointCloudXyzNode` | 4.9 MB | 29.7 Hz | 14.2 / 19.6 / 31.8 ms | 91.2 % | 13.5 % → 47.7 % |
+| `registered` | `PointCloudXyzrgbNode` | 9.8 MB | 25.4 Hz | 122 / 173 / 181 ms | 78.7 % | 18.9 % → 152 % |
+
+- The depth (and, for XYZRGB, the RGB) reaches `depth_image_proc` intra-process: the driver reports `subs 1 (intra 1)` while the cloud is subscribed, and `subs 0` otherwise (lazy subscription).
+- The cloud centre agrees with the depth image: 2.496 m against 2496 mm.
+- Without a consumer, the loaded point cloud component costs nothing. 13.5 % and 18.9 % are the camera alone; `registered` is higher because of the registration.
+- **Hypothesis, not measured:** most of the CPU jump comes from serializing 147–245 MB/s to the external consumer, not from computing the cloud. Checking it needs a consumer inside the container.
+- XYZRGB at 25 Hz with 120+ ms of lag across processes confirms the design rule: point clouds are consumed inside the container and never sent over the network.
+
+## Remote viewing: compression (2026-11-06)
+
+`kinect.launch.py aux:=false depth_mode:=registered remote_view:=true`. `remote_stats.py` runs in another process **on the robot** (loopback): this measures compression only, not the Wi-Fi. Dark room.
+
+| `depth_format` | RGB JPEG q80 | Depth | Total | Relay time per frame (RGB / depth) | Container CPU, no viewer → viewer |
+|---|---|---|---|---|---|
+| `rvl` | 7 KB, 1.6 Mbit/s, lag 4.1 ms | 175 KB, 42.0 Mbit/s, lag 5.7 ms | 43.6 Mbit/s | 2.9 / 4.6 ms | 21.0 % → 47.2 % |
+| `png` level 1 | 7 KB, 1.6 Mbit/s, lag 3.8 ms | 125 KB, 29.9 Mbit/s, lag 18.3 ms | 31.5 Mbit/s | 3.1 / 17.5 ms | 20.3 % → 86.0 % |
+
+- On this scene RVL is ~4× faster than PNG but 40 % larger. My earlier expectation that RVL would also be smaller was **wrong**.
+- The JPEG size depends heavily on the scene: 7 KB in a dark room. To be repeated in daylight.
+- **Still to do:** scenario C (laptop over Wi-Fi, Fast DDS) and scenario D (Zenoh). The robot's Wi-Fi link was −68 dBm (quality 42/70) during these tests.
 
 ### Open points
 

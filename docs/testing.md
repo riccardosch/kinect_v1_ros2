@@ -301,6 +301,72 @@ Pass:
 5. After the restart the log shows `Loaded calibration 'rgb_<serial>' from ...` and `rgb calibrated`.
 6. With `depth_mode:=registered`, only `/kinect/rgb/set_camera_info` exists, and `depth_registered/camera_info` equals `rgb/camera_info` (same `frame_id` and K).
 
+## 14. Point cloud
+
+```bash
+ros2 launch kinect_v1_bringup kinect.launch.py aux:=false point_cloud:=true
+# second terminal: the subscription also wakes depth_image_proc up
+ros2 run kinect_v1_bench cloud_stats.py /kinect/depth/points 8
+ros2 run kinect_v1_bench depth_stats.py /kinect/depth/image_raw 30
+```
+
+Expected (`mm`):
+
+```
+frame_id 'kinect_depth_optical_frame'  640x480  fields x,y,z  4.9 MB/cloud
+rate 29.79 Hz  lag mean 14.1 ms  p95 19.2 ms  max 31.3 ms
+valid points 91.3 %
+centre 10x10 median: x -0.002  y -0.002  z 2.496 m
+```
+
+Repeat with `depth_mode:=registered` on `/kinect/depth_registered/points` (fields `x,y,z,rgb`).
+
+Pass:
+1. The rate is 29.5–30.5 Hz for XYZ.
+2. The fraction of valid points is 100 % minus the no-reading fraction reported by `depth_stats.py`.
+3. The centre point z equals the depth centre median within 1 %.
+4. While `cloud_stats.py` runs, the driver's depth stats line shows `subs 1 (intra 1)` (intra-process delivery to `depth_image_proc`). Before and after, it shows `subs 0`, because the node is lazy.
+5. `point_cloud:=true depth_mode:=off` makes the launch fail with a clear message.
+
+## 15. Remote viewing (compressed topics + RViz)
+
+**On the robot (loopback baseline, no Wi-Fi):**
+
+```bash
+ros2 launch kinect_v1_bringup kinect.launch.py aux:=false depth_mode:=registered remote_view:=true
+# second terminal
+ros2 topic list | grep image_raw          # .../compressed and .../compressedDepth, NO second raw publisher
+ros2 param get /kinect/compressed_relay .rgb.image_raw.compressed.jpeg_quality          # 80
+ros2 param get /kinect/compressed_relay .depth_registered.image_raw.compressedDepth.format   # rvl
+ros2 run kinect_v1_bench remote_stats.py 14
+```
+
+Expected (dark room):
+
+```
+/kinect/rgb/image_raw/compressed
+  format "rgb8; jpeg compressed bgr8"  30.07 Hz  7 KB/frame  1.6 Mbit/s  lag mean 4.1 ms ...
+/kinect/depth_registered/image_raw/compressedDepth
+  format "16UC1; compressedDepth rvl"  29.98 Hz  175 KB/frame  42.0 Mbit/s  lag mean 5.7 ms ...
+```
+
+Repeat with `depth_format:=png`: ≈ 125 KB/frame and ≈ 18 ms of lag.
+
+**From the laptop** (procedure: [remote-view.md](remote-view.md)):
+
+```bash
+ros2 launch kinect_v1_bringup view.launch.py
+ros2 run kinect_v1_bench remote_stats.py 20
+```
+
+Pass:
+1. Only the compressed transports are added: `rgb/image_raw` has one publisher, the driver (`ros2 topic info rgb/image_raw`).
+2. The plugin parameters show the launch values (`jpeg_quality`, `depth_format`), not the plugin defaults (95, png).
+3. Without a compressed subscriber, the relay logs nothing and the container CPU does not increase (lazy).
+4. Loopback: 29.5–30.5 Hz on both topics.
+5. Laptop: RViz shows the RGB image and a coloured DepthCloud at the right scale (a wall at 2.5 m appears 2.5 m from `kinect_link`). `remote_stats.py` reports the rate, bandwidth and lag over Wi-Fi.
+6. Scenario D: the same with Zenoh; compare the rate and the lag p95.
+
 ## Test status
 
 | # | Test | Status |
@@ -318,3 +384,5 @@ Pass:
 | 11 | IMU rate, \|a\|, pitch | ✅ 2026-11-05: 29.99 Hz, \|a\| 9.64, pitch 8.6° against 8.5° from the motor; ⏳ roll sign (y) |
 | 12 | Microphones | ✅ 2026-11-05: 15999 Hz effective, 0 gaps over 8 s, received in another process; ⏳ clap test (channel order), 5-minute run, listening to the WAV |
 | 13 | camera_info and calibration | ✅ 2026-11-06: stamps matched on all 117–118 images (mm and registered); set_camera_info saves, applies live, rejects the wrong size, reloads after restart |
+| 14 | Point cloud | ✅ 2026-11-06: XYZ 29.7 Hz, 91.2 % valid points, centre 2.496 m against 2496 mm in the depth image, `intra 1` while subscribed, lazy; XYZRGB 25.4 Hz; invalid `depth_mode:=off` rejected |
+| 15 | Remote viewing | ✅ 2026-11-06 on the robot (loopback): compressed topics only, parameters applied, 30 Hz, RVL 42 Mbit/s / 5.7 ms, PNG 30 Mbit/s / 18 ms, TF published; ⏳ from the laptop over Wi-Fi (RViz, Fast DDS and Zenoh) |

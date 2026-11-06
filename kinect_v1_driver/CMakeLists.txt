@@ -18,6 +18,7 @@ find_package(std_msgs REQUIRED)
 find_package(audio_common_msgs REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(camera_calibration_parsers REQUIRED)
+find_package(image_transport REQUIRED)
 
 # libfreenect ships a minimal CMake config (variables only, no imported target).
 find_package(libfreenect CONFIG REQUIRED)
@@ -72,7 +73,23 @@ rclcpp_components_register_node(kinect_aux_component
   PLUGIN "kinect_v1_driver::KinectAuxNode"
   EXECUTABLE kinect_aux_node)
 
-install(TARGETS kinect_camera_component kinect_aux_component
+# Compressed relay for remote viewing (image_transport compressed plugins).
+add_library(compressed_relay_component SHARED
+  src/compressed_relay.cpp)
+target_include_directories(compressed_relay_component PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
+target_link_libraries(compressed_relay_component
+  rclcpp::rclcpp
+  rclcpp_components::component
+  image_transport::image_transport
+  ${sensor_msgs_TARGETS})
+
+rclcpp_components_register_node(compressed_relay_component
+  PLUGIN "kinect_v1_driver::CompressedRelay"
+  EXECUTABLE compressed_relay_node)
+
+install(TARGETS kinect_camera_component kinect_aux_component compressed_relay_component
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
@@ -94,5 +111,5 @@ endif()
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(
   rclcpp rclcpp_components sensor_msgs std_msgs audio_common_msgs
-  ament_index_cpp camera_calibration_parsers)
+  ament_index_cpp camera_calibration_parsers image_transport)
 ament_package()

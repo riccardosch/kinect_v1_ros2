@@ -41,6 +41,8 @@ install(PROGRAMS
   scripts/imu_stats.py
   scripts/audio_stats.py
   scripts/check_camera_info.py
+  scripts/cloud_stats.py
+  scripts/remote_stats.py
   DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)

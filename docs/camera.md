@@ -78,6 +78,39 @@ The depth camera cannot be calibrated this way: a checkerboard is not visible in
 
 `image_raw` is not rectified. With the default models the distortion is zero, so `image_raw` can be used wherever `image_rect` is expected; the launch files do this for the point cloud. After a calibration with real distortion coefficients, rectify with `image_proc` first.
 
+## Point cloud
+
+The driver does not compute point clouds. With `point_cloud:=true`, `kinect.launch.py` loads the standard `depth_image_proc` component **in the same container**, so the depth image reaches it intra-process:
+
+| `depth_mode` | Component | Output | Fields | Frame |
+|---|---|---|---|---|
+| `mm` | `depth_image_proc::PointCloudXyzNode` | `depth/points` | x, y, z (4.9 MB per cloud) | `kinect_depth_optical_frame` |
+| `registered` | `depth_image_proc::PointCloudXyzrgbNode` | `depth_registered/points` | x, y, z, rgb (9.8 MB per cloud) | `kinect_rgb_optical_frame` |
+
+```bash
+ros2 launch kinect_v1_bringup kinect.launch.py point_cloud:=true                          # XYZ
+ros2 launch kinect_v1_bringup kinect.launch.py point_cloud:=true depth_mode:=registered   # XYZRGB
+ros2 run kinect_v1_bench cloud_stats.py /kinect/depth/points 6
+```
+
+How it is wired:
+- `depth_image_proc` expects `image_rect`. `image_raw` is passed instead, which is correct as long as the calibration has no distortion (the default models). After a calibration with distortion, insert `image_proc` rectification.
+- Pixels without a reading (0) become NaN points.
+- **Lazy.** `depth_image_proc` subscribes to the depth only while something listens to `points`, so a loaded but unused point cloud costs nothing.
+- **QoS.** `PointCloudXyzrgbNode` subscribes to the images as RELIABLE by default; the launch file overrides this to best effort through `qos_overrides.*` parameters. Its `camera_info` subscription cannot be overridden, which is why the driver publishes `camera_info` as reliable. The `points` publisher is set to best effort with depth `qos_depth`, like the other sensor topics.
+- **Zero-copy into depth_image_proc.** While a cloud subscriber is active, the driver reports `subs 1 (intra 1)` on the depth (and RGB) topic. A per-buffer address check is not possible without modifying `depth_image_proc`.
+
+Measured on the Pi 5, with the consumer in another process (numbers in [benchmark.md](benchmark.md)):
+
+| | XYZ (`mm`) | XYZRGB (`registered`) |
+|---|---|---|
+| Rate | 29.7 Hz | 25.4 Hz |
+| Latency (consumer in another process) | 14 ms mean, 20 ms p95 | 122 ms mean, 173 ms p95 |
+| Container CPU | 13.5 % → 47.7 % of one core | 18.9 % → 152 % of one core |
+| Centre point against depth image | 2.496 m against 2496 mm | — |
+
+**Point clouds are heavy:** 147–245 MB/s at full rate. Consume them **inside the container**, and never send them over the network. For remote viewing, send compressed depth plus `camera_info` and let RViz build the cloud (`DepthCloud` display).
+
 ## Parameters
 
 | Name | Default | Description |

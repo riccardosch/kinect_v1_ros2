@@ -16,6 +16,10 @@
   <depend>audio_common_msgs</depend>
   <depend>ament_index_cpp</depend>
   <depend>camera_calibration_parsers</depend>
+  <depend>image_transport</depend>
+  <!-- runtime plugins used by CompressedRelay -->
+  <exec_depend>compressed_image_transport</exec_depend>
+  <exec_depend>compressed_depth_image_transport</exec_depend>
   <!-- libfreenect is built from source and installed in /usr/local (see README). -->
 
   <test_depend>ament_cmake_gtest</test_depend>

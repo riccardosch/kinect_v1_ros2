@@ -4,7 +4,7 @@ ROS 2 Jazzy driver for the **Microsoft Kinect v1** (Xbox 360, model 1414), writt
 
 It uses all the hardware (RGB, depth, LED, accelerometer, 4 microphones), publishes standard ROS messages, and moves images to consumers in the same process **without copying them**.
 
-> **Status: work in progress.** Working: RGB, depth, `camera_info` and calibration, LED, IMU, microphones. Coming next: point cloud, compressed topics for remote viewing. The tilt motor is intentionally not driven.
+> **Status: work in progress.** Working: RGB, depth, `camera_info` and calibration, point cloud, LED, IMU, microphones, compressed topics + RViz config for remote viewing. To do: Wi-Fi measurements from a laptop, URDF, robustness (USB unplug). The tilt motor is intentionally not driven.
 
 ---
 
@@ -56,11 +56,15 @@ This one command starts everything in a single multi-threaded container with int
 | Variant | Command |
 |---|---|
 | Depth aligned to the RGB image | `ros2 launch kinect_v1_bringup kinect.launch.py depth_mode:=registered` |
+| + point cloud (XYZ) | `ros2 launch kinect_v1_bringup kinect.launch.py point_cloud:=true` |
+| + coloured point cloud (XYZRGB) | `ros2 launch kinect_v1_bringup kinect.launch.py point_cloud:=true depth_mode:=registered` |
+| Remote viewing (robot side) | `ros2 launch kinect_v1_bringup kinect.launch.py depth_mode:=registered remote_view:=true` |
+| Remote viewing (laptop, RViz) | `ros2 launch kinect_v1_bringup view.launch.py` — see [docs/remote-view.md](docs/remote-view.md) |
 | Camera only (no LED / IMU / audio) | `ros2 launch kinect_v1_bringup kinect.launch.py aux:=false` |
 | LED + IMU + audio only | `ros2 launch kinect_v1_bringup kinect.launch.py camera:=false` |
 | No microphones | `ros2 launch kinect_v1_bringup kinect.launch.py enable_audio:=false` |
 
-All launch arguments: `camera`, `aux`, `enable_rgb`, `depth_mode` (`mm` \| `registered` \| `off`), `imu_rate_hz`, `initial_led`, `enable_audio`, `publish_cancelled`, `qos_depth`.
+All launch arguments: `camera`, `aux`, `enable_rgb`, `depth_mode` (`mm` \| `registered` \| `off`), `point_cloud`, `remote_view`, `jpeg_quality`, `depth_format` (`rvl` \| `png`), `png_level`, `publish_tf`, `imu_rate_hz`, `initial_led`, `enable_audio`, `publish_cancelled`, `qos_depth`.
 
 ### 4. Topics
 
@@ -71,8 +75,11 @@ All topics are in the `/kinect` namespace.
 | `rgb/image_raw` + `rgb/camera_info` | `sensor_msgs/Image` `rgb8` 640×480 + `CameraInfo` | 30 Hz |
 | `depth/image_raw` + `depth/camera_info` | `sensor_msgs/Image` `16UC1` (mm, 0 = no reading) + `CameraInfo` | 30 Hz |
 | `depth_registered/image_raw` + `depth_registered/camera_info` | same, aligned to RGB (instead of `depth/`, with `depth_mode:=registered`) | 30 Hz |
+| `depth/points` or `depth_registered/points` | `sensor_msgs/PointCloud2`, XYZ or XYZRGB (only with `point_cloud:=true`; keep it inside the container) | 30 / 25 Hz |
 | `imu` | `sensor_msgs/Imu` (linear acceleration only) | 30 Hz |
 | `audio/data` + `audio/info` | `audio_common_msgs/AudioDataStamped` 4 ch `S32LE` 16 kHz + `AudioInfo` (latched) | 62.5 msg/s |
+| `…/image_raw/compressed`, `…/image_raw/compressedDepth` | `sensor_msgs/CompressedImage`: JPEG for RGB, RVL or PNG for depth (only with `remote_view:=true`; for Wi-Fi viewers) | 30 Hz |
+| `/tf_static` | `kinect_link` → `kinect_rgb_optical_frame`, `kinect_depth_optical_frame`, `kinect_imu_frame` (`publish_tf:=true`) | — |
 | `led/cmd` (input) | `std_msgs/String`: `off` `green` `red` `yellow` `blink_green` `blink_red_yellow` | — |
 | `rgb/set_camera_info`, `depth/set_camera_info` (services) | `sensor_msgs/srv/SetCameraInfo` | — |
 
@@ -96,18 +103,19 @@ To calibrate the RGB camera with `camera_calibration`, see [docs/camera.md](docs
 | | Feature | Details |
 |---|---|---|
 | ⚡ | **Zero-copy images.** libfreenect writes each frame straight into the ROS message, which reaches consumers in the same container without any copy. Verified frame by frame, with a negative control. | [docs/zero-copy.md](docs/zero-copy.md) |
-| 📷 | **Camera.** RGB and depth (millimetres, or registered to RGB); `camera_info` on every frame with the same stamp; per-device calibration files; `set_camera_info` for `camera_calibration`; depth intrinsics read from the device's factory data. | [docs/camera.md](docs/camera.md) |
+| 📷 | **Camera.** RGB and depth (millimetres, or registered to RGB); `camera_info` on every frame with the same stamp; per-device calibration files; `set_camera_info` for `camera_calibration`; depth intrinsics read from the device's factory data; optional XYZ / XYZRGB point cloud through `depth_image_proc` in the same container. | [docs/camera.md](docs/camera.md) |
 | 💡 | **LED, IMU, microphones.** LED commands; accelerometer as `sensor_msgs/Imu` (REP 103 / 145); 4 microphones at 16 kHz with sample-accurate timestamps. All device calls are owned by one thread. | [docs/aux.md](docs/aux.md) |
+| 📡 | **Remote viewing.** Compressed RGB (JPEG) and depth (RVL / PNG) at 30 Hz in 32–44 Mbit/s, compressed off the driver's thread and only when someone watches; ready-made RViz config with a coloured `DepthCloud`; Zenoh instructions. | [docs/remote-view.md](docs/remote-view.md) |
 | 📊 | **Measured performance.** On a Pi 5: 30 Hz on every stream; image latency p95 < 0.6 ms in the container and ≈ 1.7 ms across processes; CPU ≈ 8 % of one core for RGB. | [docs/benchmark.md](docs/benchmark.md) |
-| ✅ | **Tests.** Lint and unit tests (no hardware), plus 13 hardware tests, each with a numeric pass criterion and a status table. | [docs/testing.md](docs/testing.md) |
+| ✅ | **Tests.** Lint and unit tests (no hardware), plus 14 hardware tests, each with a numeric pass criterion and a status table. | [docs/testing.md](docs/testing.md) |
 | 🛠 | **Troubleshooting.** No device found, nothing received, QoS mismatches, and more. | [docs/troubleshooting.md](docs/troubleshooting.md) |
 
 ## Repository layout
 
 | Path | Package | Content |
 |---|---|---|
-| `kinect_v1_driver/` | `kinect_v1_driver` | Components `KinectCameraNode` (RGB, depth, camera_info) and `KinectAuxNode` (LED, IMU, audio) |
-| `kinect_v1_bringup/` | `kinect_v1_bringup` | `kinect.launch.py` (everything) and `camera.launch.py` (camera + benchmark options) |
+| `kinect_v1_driver/` | `kinect_v1_driver` | Components `KinectCameraNode` (RGB, depth, camera_info), `KinectAuxNode` (LED, IMU, audio) and `CompressedRelay` (remote viewing) |
+| `kinect_v1_bringup/` | `kinect_v1_bringup` | `kinect.launch.py` (robot: everything), `view.launch.py` (laptop: RViz), `camera.launch.py` (camera + benchmark options), `rviz/remote.rviz` |
 | `tools/bench/` | `kinect_v1_bench` | Measurement node (`image_stats_node`) and check scripts used by the tests |
 | `scripts/` | — | udev rule and kernel-module blacklist |
 | `docs/` | — | Detailed documentation |

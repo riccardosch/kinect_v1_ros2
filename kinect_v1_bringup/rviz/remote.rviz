@@ -1,0 +1,89 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Grid
+      Plane: XY
+      Plane Cell Count: 10
+      Cell Size: 0.5
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Name: TF
+      Marker Scale: 0.3
+      Show Names: false
+      Value: true
+    # RGB over Wi-Fi: the transport is taken from the topic name (/compressed).
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Name: RGB (JPEG)
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /kinect/rgb/image_raw/compressed
+      Value: true
+    # Coloured 3D view built on THIS machine from compressed depth + RGB +
+    # camera_info. Robot side: depth_mode:=registered remote_view:=true.
+    - Class: rviz_default_plugins/DepthCloud
+      Enabled: true
+      Name: DepthCloud (registered)
+      Depth Map Topic: /kinect/depth_registered/image_raw
+      Depth Map Transport Hint: compressedDepth
+      Color Image Topic: /kinect/rgb/image_raw
+      Color Transport Hint: compressed
+      CameraInfo Topic: /kinect/depth_registered/camera_info
+      Queue Size: 1
+      Reliability Policy: Best effort
+      Topic Filter: true
+      Auto Size: true
+      Auto Size Factor: 1
+      Alpha: 1
+      Occlusion Compensation: false
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: kinect_link
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Target Frame: <Fixed Frame>
+      Focal Point:
+        X: 1.5
+        Y: 0
+        Z: 0
+      Distance: 3
+      Pitch: 0.35
+      Yaw: 3.14
+      Near Clip Distance: 0.01
+      Value: Orbit (rviz)
+    Saved: ~
+Window Geometry:
+  Height: 900
+  Width: 1500
+  X: 60
+  Y: 60
