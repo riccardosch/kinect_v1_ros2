@@ -67,9 +67,11 @@ def main():
     print(f'mean  x {mx:+.2f}  y {my:+.2f}  z {mz:+.2f} m/s^2   |a| {statistics.mean(norm):.2f}')
     print(f'std   x {statistics.stdev(ax):.3f}  y {statistics.stdev(ay):.3f}  '
           f'z {statistics.stdev(az):.3f} m/s^2')
-    # REP 103 frame (x forward, y left, z up): nose-up pitch -> +x, left roll -> +y.
-    print(f'pitch (nose up +) {math.degrees(math.atan2(mx, mz)):+.1f} deg   '
-          f'roll (left side down +) {math.degrees(math.atan2(my, mz)):+.1f} deg')
+    # REP 103 frame (x forward, y left, z up). At rest the reading is the
+    # specific force (+g up): raising the front tilts +x up (ax > 0), raising
+    # the LEFT side tilts +y up (ay > 0), i.e. a positive REP 103 roll.
+    print(f'pitch (front up +) {math.degrees(math.atan2(mx, mz)):+.1f} deg   '
+          f'roll (left side up +) {math.degrees(math.atan2(my, mz)):+.1f} deg')
     return 0
 
 

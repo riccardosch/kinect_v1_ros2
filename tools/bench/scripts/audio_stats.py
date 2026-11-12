@@ -38,6 +38,39 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 FORMATS = {'S32LE': '<i4', 'S16LE': '<i2'}
 
 
+def print_arrival_order(samples, sample_rate, full_scale):
+    """
+    For each loud, isolated sound, print which microphone hears it first.
+
+    The array is about 22 cm wide: a sound from one side reaches the far
+    microphone ~0.6 ms (~10 samples) later. Delays are cross-correlation lags
+    against mic1 (positive = later than mic1). Clipped events (>= 99 % FS)
+    are flagged: their timing is unreliable.
+    """
+    x = samples.astype(np.float64)
+    env = np.abs(x).max(axis=1)
+    if env.max() < 0.01 * full_scale:
+        return  # quiet recording: nothing to localise
+    events, last = [], -sample_rate
+    for i in np.flatnonzero(env > 0.3 * env.max()):
+        if i - last > 0.3 * sample_rate:
+            events.append(i)
+        last = i
+    half = int(0.03 * sample_rate)  # 30 ms window around each event
+    for e in events[:10]:
+        seg = x[max(0, e - half):e + half]
+        seg = seg - seg.mean(axis=0)
+        lags = []
+        for c in range(seg.shape[1]):
+            cc = np.correlate(seg[:, c], seg[:, 0], 'full')
+            lags.append(int(np.argmax(cc)) - (len(seg) - 1))
+        order = ' < '.join(f'mic{c + 1}' for c in np.argsort(lags, kind='stable'))
+        clipped = ' (CLIPPED: too loud, timing unreliable)' if (
+            np.abs(seg).max() >= 0.99 * full_scale) else ''
+        print(f'event at {e / sample_rate:5.2f} s: lag vs mic1 {lags} samples -> '
+              f'first {order}{clipped}')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     parser.add_argument('seconds', type=float, nargs='?', default=5.0)
@@ -84,9 +117,15 @@ def main():
     samples = samples.reshape(-1, ai.channels)
     frames_per_chunk = len(chunks[0][2]) // (np.dtype(dtype).itemsize * ai.channels)
 
-    wall = chunks[-1][0] - chunks[0][0]
-    # Rate over the chunks after the first one (the first marks t=0).
-    rate = (len(samples) - frames_per_chunk) / wall
+    # Effective rate from arrival times, skipping the first second: a reliable
+    # subscriber that starts late (busy machine) first drains a backlog, which
+    # would inflate the rate. The driver logs its own count (stats_period_s).
+    t0 = chunks[0][0] + 1.0
+    steady = [c for c in chunks if c[0] >= t0]
+    if len(steady) < 3:
+        steady = chunks
+    wall = steady[-1][0] - steady[0][0]
+    rate = (len(steady) - 1) * frames_per_chunk / wall
     stamp_steps = np.diff([c[1] for c in chunks])
     chunk_s = frames_per_chunk / ai.sample_rate
     gaps = int(np.sum(stamp_steps > 1.5 * chunk_s))
@@ -106,6 +145,7 @@ def main():
         rms_db = 20 * math.log10(rms + 1e-12)
         print(f'mic{ch + 1}: peak {100 * peak:6.2f} %FS ({peak_db:6.1f} dBFS)  '
               f'rms {rms_db:6.1f} dBFS')
+    print_arrival_order(samples, ai.sample_rate, full_scale)
 
     if args.wav:
         with wave.open(args.wav, 'wb') as w:
